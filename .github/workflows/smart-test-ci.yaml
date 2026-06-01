@@ -1,0 +1,142 @@
+name: Smart Test CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are you triggering this manually?'
+        required: false
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Pick — run the selector, export plan
+  # ─────────────────────────────────────────────
+  pick:
+    name: Pick Tests
+    runs-on: ubuntu-latest
+    outputs:
+      smoke_specs: ${{ steps.picker.outputs.smoke_specs }}
+      e2e_domains: ${{ steps.picker.outputs.e2e_domains }}
+      strategy:    ${{ steps.picker.outputs.strategy }}
+      confidence:  ${{ steps.picker.outputs.confidence }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run Smart Test Picker
+        id: picker
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          node -r ts-node/register src/cli.ts \
+            --diff-base ${{ github.base_ref }} \
+            --format json \
+            --output .smart-pick/plan.json
+
+          SMOKE=$(jq -r '.smokeSpecs | join(",")' .smart-pick/plan.json)
+          DOMAINS=$(jq -r '[.domains[].id] | join(",")' .smart-pick/plan.json)
+          STRATEGY=$(jq -r '.strategy' .smart-pick/plan.json)
+          CONFIDENCE=$(jq -r '.confidence' .smart-pick/plan.json)
+
+          echo "smoke_specs=$SMOKE"   >> $GITHUB_OUTPUT
+          echo "e2e_domains=$DOMAINS" >> $GITHUB_OUTPUT
+          echo "strategy=$STRATEGY"   >> $GITHUB_OUTPUT
+          echo "confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
+
+          echo "### Smart Test Picker" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| ----- | ----- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Strategy   | $STRATEGY |" >> $GITHUB_STEP_SUMMARY
+          echo "| Confidence | $(echo "$CONFIDENCE * 100" | bc)% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Domains    | $DOMAINS |" >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart-pick-plan
+          path: .smart-pick/plan.json
+
+  # ─────────────────────────────────────────────
+  # Job 2: Smoke Gate — required check, < 10 min
+  # ─────────────────────────────────────────────
+  smoke-gate:
+    name: Smoke Gate
+    needs: pick
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run smoke specs
+        run: |
+          SPECS="${{ needs.pick.outputs.smoke_specs }}"
+          if [ -z "$SPECS" ]; then
+            echo "No smoke specs selected — running default smoke suite"
+            npx playwright test e2e/smoke/ --reporter=list
+          else
+            npx playwright test $( echo $SPECS | tr ',' ' ' ) --reporter=list
+          fi
+        env:
+          BASE_URL: ${{ vars.STAGING_URL }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-gate-results
+          path: playwright-report/
+
+  # ─────────────────────────────────────────────
+  # Job 3: Extended Validation — parallel matrix
+  # ─────────────────────────────────────────────
+  extended-validation:
+    name: E2E [${{ matrix.domain }}]
+    needs: [pick, smoke-gate]
+    if: needs.pick.outputs.strategy == 'targeted'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: ${{ fromJSON(format('["{0}"]', join(fromJSON(format('[""]')), '","'))) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run E2E for domain ${{ matrix.domain }}
+        run: npx playwright test e2e/${{ matrix.domain }}/ --reporter=list
+        env:
+          BASE_URL: ${{ vars.STAGING_URL }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.domain }}
+          path: playwright-report/

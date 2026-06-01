@@ -1,0 +1,90 @@
+name: Release Validation
+
+# Manual trigger only — release intelligence pass before cutting a release branch
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Aggregate window (e.g. 7d, 14d, 30d)'
+        required: true
+        default: '7d'
+      release_tag:
+        description: 'Release tag being cut (e.g. v2.4.0)'
+        required: true
+
+jobs:
+  release-analysis:
+    name: Release Intelligence Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for --since
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run release window analysis
+        id: analysis
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          node -r ts-node/register src/cli.ts \
+            --since ${{ inputs.since }} \
+            --format json \
+            --output .smart-pick/release-plan.json
+
+          RECOMMENDATION=$(jq -r '.recommendation // "targeted"' .smart-pick/release-plan.json 2>/dev/null || echo "targeted")
+          CONCENTRATION=$(jq -r '.concentrationScore // 0' .smart-pick/release-plan.json 2>/dev/null || echo "0")
+
+          echo "recommendation=$RECOMMENDATION" >> $GITHUB_OUTPUT
+          echo "concentration=$CONCENTRATION"   >> $GITHUB_OUTPUT
+
+          echo "### Release Validation — ${{ inputs.release_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| ----- | ----- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Window           | ${{ inputs.since }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Recommendation   | $RECOMMENDATION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Concentration    | $CONCENTRATION |" >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-plan-${{ inputs.release_tag }}
+          path: .smart-pick/release-plan.json
+          retention-days: 90
+
+  # Conditionally run full suite if concentration is high
+  full-suite-gate:
+    name: Full Suite (release)
+    needs: release-analysis
+    if: needs.release-analysis.outputs.recommendation == 'full-suite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx playwright install --with-deps
+
+      - name: Run full suite for release ${{ inputs.release_tag }}
+        run: npx playwright test --reporter=html,list
+        env:
+          BASE_URL: ${{ vars.STAGING_URL }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-full-suite-${{ inputs.release_tag }}
+          path: playwright-report/
+          retention-days: 90

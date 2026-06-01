@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.smart-pick/
+playwright-report/
+playwright/.auth/
+test-results/
+.env
+.env.local
+*.log
