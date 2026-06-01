@@ -378,11 +378,5 @@ export function matchDomains(filePath: string): FeatureDomain[] {
 }
 
 export function getAllSmokeSpecs(): string[] {
-  const all = FEATURE_DOMAINS.flatMap(d => d.smokeSpecs)
-  return [...new Set(all)]
-}
-
-export function getAllE2eSpecs(): string[] {
-  const all = FEATURE_DOMAINS.flatMap(d => d.e2eSpecs)
-  return [...new Set(all)]
+  return [...new Set(FEATURE_DOMAINS.flatMap(d => d.smokeSpecs))]
 }

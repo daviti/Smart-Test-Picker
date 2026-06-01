@@ -1,4 +1,4 @@
-import { Zap, Github } from 'lucide-react'
+import { Zap, GitBranch } from 'lucide-react'
 
 export function Header() {
   return (
@@ -20,12 +20,12 @@ export function Header() {
             <span>Picker engine active</span>
           </div>
           <a
-            href="https://github.com/davidortiz/smart-test-picker"
+            href="https://github.com/daviti/Smart-Test-Picker"
             target="_blank"
             rel="noopener noreferrer"
             className="text-slate-500 hover:text-slate-300 transition-colors"
           >
-            <Github className="w-4 h-4" />
+            <GitBranch className="w-4 h-4" />
           </a>
         </div>
       </div>

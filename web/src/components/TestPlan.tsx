@@ -14,10 +14,11 @@ function SpecList({ title, specs, color }: { title: string; specs: string[]; col
       <button
         onClick={() => setExpanded(e => !e)}
         className="flex items-center gap-2 w-full text-left mb-2"
+        aria-expanded={expanded}
       >
         <span className={`text-xs font-semibold uppercase tracking-wider ${color}`}>{title}</span>
         <span className="text-xs text-slate-600">{specs.length} specs</span>
-        <span className="ml-auto text-slate-600 text-xs">{expanded ? '▾' : '▸'}</span>
+        <span className="ml-auto text-slate-600 text-xs" aria-hidden>{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && (
         <ul className="space-y-1 animate-fade-in">
@@ -38,9 +39,15 @@ export function TestPlan({ result }: TestPlanProps) {
 
   const handleCopy = () => {
     if (!result) return
-    navigator.clipboard.writeText(JSON.stringify(result, null, 2))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1800)
+    navigator.clipboard
+      .writeText(JSON.stringify(result, null, 2))
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1800)
+      })
+      .catch(() => {
+        // clipboard API unavailable (non-HTTPS or permissions denied) — no-op
+      })
   }
 
   const totalTests = (result?.smokeSpecs.length ?? 0) + (result?.e2eSpecs.length ?? 0)
@@ -108,7 +115,6 @@ export function TestPlan({ result }: TestPlanProps) {
               </div>
             </div>
 
-            {/* Progress bar */}
             <div className="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-emerald-500 rounded-full transition-all duration-700"
@@ -137,7 +143,9 @@ export function TestPlan({ result }: TestPlanProps) {
                 </p>
                 <ul className="space-y-1">
                   {result.unmappedFiles.map(f => (
-                    <li key={f} className="text-xs text-slate-600 pl-2 font-mono truncate">⚠ {f}</li>
+                    <li key={f} className="text-xs text-slate-600 pl-2 font-mono truncate">
+                      ⚠ {f}
+                    </li>
                   ))}
                 </ul>
               </div>

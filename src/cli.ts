@@ -5,7 +5,6 @@ import * as path from 'path'
 import minimist from 'minimist'
 import { pick, analyzeReleaseWindow, formatResult } from './core/picker'
 import { enrichUnmappedFiles } from './ai-suggest'
-import { unique } from './core/utils'
 
 const argv = minimist(process.argv.slice(2), {
   boolean: ['dry-run', 'help', 'ai'],
@@ -23,7 +22,7 @@ Usage:
 
 Options:
   --diff-base <branch>   Compare against branch (default: main)
-  --since <duration>     Aggregate PRs merged in window (e.g. 7d, 30d)
+  --since <duration>     Aggregate commits in window (e.g. 7d, 2w, 24h)
   --dry-run              Print plan without writing output files
   --format json|text     Output format (default: text)
   --output <path>        Write JSON result to file
@@ -41,51 +40,97 @@ Examples:
 
 function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)(d|h|w)$/)
-  if (!match) throw new Error(`Invalid duration: ${duration}. Use format: 7d, 24h, 2w`)
+  if (!match) throw new Error(`Invalid duration: "${duration}". Use format: 7d, 24h, 2w`)
   const [, value, unit] = match
-  const ms = parseInt(value, 10)
-  const multipliers: Record<string, number> = { h: 3600000, d: 86400000, w: 604800000 }
-  return ms * multipliers[unit]
+  const n = parseInt(value, 10)
+  const multipliers: Record<string, number> = { h: 3_600_000, d: 86_400_000, w: 604_800_000 }
+  return n * multipliers[unit]
+}
+
+function durationToDays(duration: string): number {
+  const match = duration.match(/^(\d+)(d|h|w)$/)
+  if (!match) return 7
+  const [, value, unit] = match
+  const n = parseInt(value, 10)
+  if (unit === 'h') return Math.ceil(n / 24)
+  if (unit === 'w') return n * 7
+  return n
 }
 
 function getChangedFilesFromGitDiff(base = 'main'): string[] {
   try {
-    const output = execSync(`git diff --name-only ${base}...HEAD`, { encoding: 'utf8' })
+    const output = execSync(`git diff --name-only ${base}...HEAD`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
     return output.split('\n').map(l => l.trim()).filter(Boolean)
   } catch {
-    console.warn(`⚠  Could not run git diff against ${base}. Falling back to staged files.`)
-    const output = execSync('git diff --name-only --cached', { encoding: 'utf8' })
-    return output.split('\n').map(l => l.trim()).filter(Boolean)
+    console.warn(`⚠  git diff against "${base}" failed — falling back to staged files`)
+    try {
+      const output = execSync('git diff --name-only --cached', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      return output.split('\n').map(l => l.trim()).filter(Boolean)
+    } catch {
+      console.warn('⚠  Could not read staged files either — no changed files detected')
+      return []
+    }
   }
 }
 
-async function getChangedFilesSince(duration: string): Promise<{ files: string[]; mergedPRs: number }> {
+async function getChangedFilesSince(
+  duration: string
+): Promise<{ files: string[]; commitCount: number }> {
   const ms = parseDuration(duration)
   const sinceDate = new Date(Date.now() - ms).toISOString()
 
-  const commits = execSync(`git log --since="${sinceDate}" --format="%H"`, { encoding: 'utf8' })
-    .split('\n').map(l => l.trim()).filter(Boolean)
+  let commits: string[]
+  try {
+    commits = execSync(`git log --since="${sinceDate}" --format="%H"`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+  } catch {
+    console.warn('⚠  git log failed — no commits found')
+    return { files: [], commitCount: 0 }
+  }
 
   if (commits.length === 0) {
-    return { files: [], mergedPRs: 0 }
+    return { files: [], commitCount: 0 }
   }
 
   const files = new Set<string>()
   for (const commit of commits) {
     try {
-      const changed = execSync(`git diff-tree --no-commit-id -r --name-only ${commit}`, { encoding: 'utf8' })
-      changed.split('\n').map(l => l.trim()).filter(Boolean).forEach(f => files.add(f))
+      execSync(`git diff-tree --no-commit-id -r --name-only ${commit}`, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .forEach(f => files.add(f))
     } catch {
-      // skip bad commits
+      // individual bad commits are skipped
     }
   }
 
-  return { files: [...files], mergedPRs: commits.length }
+  return { files: [...files], commitCount: commits.length }
+}
+
+function writeOutput(outputPath: string, data: unknown): void {
+  const resolved = path.resolve(outputPath)
+  fs.mkdirSync(path.dirname(resolved), { recursive: true })
+  fs.writeFileSync(resolved, JSON.stringify(data, null, 2))
 }
 
 async function main() {
   let changedFiles: string[] = []
-  let mergedPRs = 0
+  let commitCount = 0
   let isReleaseWindow = false
 
   if (process.env.CHANGED_FILES) {
@@ -93,10 +138,11 @@ async function main() {
     console.log(`📋 Reading from CHANGED_FILES env var: ${changedFiles.length} files`)
   } else if (argv.since) {
     isReleaseWindow = true
-    const result = await getChangedFilesSince(argv.since as string)
+    const since = argv.since as string
+    const result = await getChangedFilesSince(since)
     changedFiles = result.files
-    mergedPRs = result.mergedPRs
-    console.log(`🕐 Aggregating last ${argv.since}: ${mergedPRs} commits, ${changedFiles.length} unique files`)
+    commitCount = result.commitCount
+    console.log(`🕐 Aggregating last ${since}: ${commitCount} commits, ${changedFiles.length} unique files`)
   } else {
     changedFiles = getChangedFilesFromGitDiff(argv['diff-base'] || 'main')
     console.log(`🔍 Changed files vs ${argv['diff-base'] || 'main'}: ${changedFiles.length} files`)
@@ -113,7 +159,7 @@ async function main() {
     console.log(`🤖 Asking Claude Haiku about ${result.unmappedFiles.length} unmapped files...`)
     const suggestions = await enrichUnmappedFiles(result.unmappedFiles)
     if (suggestions.size > 0) {
-      console.log(`💡 AI suggestions received for ${suggestions.size} files (informational only)`)
+      console.log(`💡 AI suggestions for ${suggestions.size} files (informational only):`)
       suggestions.forEach((domains, file) => {
         console.log(`   ${file} → ${domains.join(', ')}`)
       })
@@ -121,38 +167,35 @@ async function main() {
   }
 
   if (isReleaseWindow) {
-    const window = analyzeReleaseWindow(changedFiles, mergedPRs, parseInt(argv.since as string, 10))
+    const windowDays = durationToDays(argv.since as string)
+    const window = analyzeReleaseWindow(changedFiles, commitCount, windowDays)
     console.log(`\n📊 Release Intelligence (last ${argv.since}):`)
-    console.log(`   PRs merged        : ${window.mergedPRs}`)
+    console.log(`   Commits analyzed   : ${window.mergedPRs}`)
     console.log(`   Concentration score: ${window.concentrationScore}`)
-    console.log(`   High-risk domains : ${window.highRiskDomains.map(d => d.name).join(', ') || 'none'}`)
-    console.log(`   Recommendation    : ${window.recommendation.toUpperCase()}`)
+    console.log(`   High-risk domains  : ${window.highRiskDomains.map(d => d.name).join(', ') || 'none'}`)
+    console.log(`   Recommendation     : ${window.recommendation.toUpperCase()}`)
   }
 
+  const isDryRun = argv['dry-run'] as boolean
+
   if (argv.format === 'json') {
-    const json = JSON.stringify(result, null, 2)
-    if (argv.output) {
-      const outputPath = path.resolve(argv.output as string)
-      fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-      fs.writeFileSync(outputPath, json)
-      console.log(`\n📄 Output written to ${outputPath}`)
+    if (argv.output && !isDryRun) {
+      writeOutput(argv.output as string, result)
+      console.log(`\n📄 Output written to ${path.resolve(argv.output as string)}`)
     } else {
-      console.log(json)
+      console.log(JSON.stringify(result, null, 2))
     }
   } else {
     console.log(formatResult(result))
-  }
-
-  if (!argv['dry-run'] && argv.output && argv.format !== 'json') {
-    const outputPath = path.resolve(argv.output as string)
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-    fs.writeFileSync(outputPath, JSON.stringify(result, null, 2))
+    if (argv.output && !isDryRun) {
+      writeOutput(argv.output as string, result)
+    }
   }
 
   process.exit(result.strategy === 'targeted' ? 0 : 2)
 }
 
 main().catch(err => {
-  console.error('Fatal:', err)
+  console.error('Fatal:', err instanceof Error ? err.message : err)
   process.exit(1)
 })

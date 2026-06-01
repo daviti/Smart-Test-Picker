@@ -1,7 +1,6 @@
 import type {
   FeatureDomain,
   FileDomainMapping,
-  PickOptions,
   PickResult,
   ReleaseWindow,
   RuntimeEstimate,
@@ -19,8 +18,6 @@ function unique<T>(arr: T[]): T[] {
   return [...new Set(arr)]
 }
 
-export { unique }
-
 function calculateConfidence(
   changedFiles: string[],
   unmappedFiles: string[],
@@ -30,9 +27,7 @@ function calculateConfidence(
 
   const mappedRatio = 1 - unmappedFiles.length / changedFiles.length
   const criticalPenalty = triggeredDomains.filter(d => d.riskLevel === 'critical').length * 0.05
-  const raw = mappedRatio - criticalPenalty
-
-  return Math.max(0, Math.min(1, raw))
+  return Math.max(0, Math.min(1, mappedRatio - criticalPenalty))
 }
 
 function estimateRuntime(smokeSpecs: string[], e2eSpecs: string[]): RuntimeEstimate {
@@ -44,6 +39,24 @@ function estimateRuntime(smokeSpecs: string[], e2eSpecs: string[]): RuntimeEstim
     targetedMinutes: Math.round(targeted),
     savedMinutes: Math.round(Math.max(0, saved)),
     savedPercent: Math.round(Math.max(0, (saved / FULL_SUITE_PARALLEL_MINUTES) * 100)),
+  }
+}
+
+function fallbackMessage(
+  reason: Strategy,
+  domains: FeatureDomain[],
+  unmapped: string[],
+  changed: string[]
+): string {
+  switch (reason) {
+    case 'blast-radius':
+      return `${domains.length} domains touched (threshold: ${BLAST_RADIUS_THRESHOLD}) — running full smoke suite`
+    case 'smoke-full':
+      return `${unmapped.length}/${changed.length} files unmapped (${Math.round((unmapped.length / changed.length) * 100)}%) — running full smoke suite`
+    case 'no-mapping':
+      return 'No file-to-domain matches found — running full smoke suite'
+    default:
+      return 'Fallback triggered'
   }
 }
 
@@ -68,25 +81,7 @@ function buildFallback(
   }
 }
 
-function fallbackMessage(
-  reason: Strategy,
-  domains: FeatureDomain[],
-  unmapped: string[],
-  changed: string[]
-): string {
-  switch (reason) {
-    case 'blast-radius':
-      return `${domains.length} domains touched (threshold: ${BLAST_RADIUS_THRESHOLD}) — running full smoke suite`
-    case 'smoke-full':
-      return `${unmapped.length}/${changed.length} files unmapped (${Math.round((unmapped.length / changed.length) * 100)}%) — running full smoke suite`
-    case 'no-mapping':
-      return 'No file-to-domain matches found — running full smoke suite'
-    default:
-      return 'Fallback triggered'
-  }
-}
-
-export function pick(changedFiles: string[], _options?: PickOptions): PickResult {
+export function pick(changedFiles: string[]): PickResult {
   if (changedFiles.length === 0) {
     return buildFallback('no-mapping', [], [], [])
   }
@@ -135,7 +130,8 @@ export function analyzeReleaseWindow(
   mergedPRs: number,
   windowDays: number
 ): ReleaseWindow {
-  const result = pick(unique(changedFilesAcrossPRs))
+  const deduped = unique(changedFilesAcrossPRs)
+  const result = pick(deduped)
 
   const domainFrequency = new Map<string, number>()
   changedFilesAcrossPRs.forEach(file => {
@@ -151,8 +147,8 @@ export function analyzeReleaseWindow(
     concentrationScore += count * riskWeights[domain.riskLevel]
   })
 
-  const highRiskDomains = result.domains.filter(d =>
-    d.riskLevel === 'critical' || d.riskLevel === 'high'
+  const highRiskDomains = result.domains.filter(
+    d => d.riskLevel === 'critical' || d.riskLevel === 'high'
   )
 
   let recommendation: ReleaseWindow['recommendation']
@@ -169,7 +165,7 @@ export function analyzeReleaseWindow(
     startDate: new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000),
     endDate: now,
     mergedPRs,
-    changedFiles: unique(changedFilesAcrossPRs),
+    changedFiles: deduped,
     domains: result.domains,
     concentrationScore,
     highRiskDomains,
@@ -180,6 +176,7 @@ export function analyzeReleaseWindow(
 export function formatResult(result: PickResult): string {
   const lines: string[] = []
   const { strategy, domains, smokeSpecs, e2eSpecs, confidence, runtimeSaved, fallbackReason } = result
+  const unmappedSet = new Set(result.unmappedFiles)
 
   lines.push(`\n╔══════════════════════════════════════════════════════╗`)
   lines.push(`  Smart Test Picker — ${new Date(result.timestamp).toLocaleString()}`)
@@ -193,8 +190,8 @@ export function formatResult(result: PickResult): string {
 
   lines.push(`\n  Changed files (${result.changedFiles.length}):`)
   result.changedFiles.forEach(f => {
-    const mapped = matchDomains(f).map(d => d.name).join(', ') || 'unmapped'
-    lines.push(`    ${result.unmappedFiles.includes(f) ? '⚠' : '✓'} ${f}  →  ${mapped}`)
+    const domainNames = matchDomains(f).map(d => d.name).join(', ') || 'unmapped'
+    lines.push(`    ${unmappedSet.has(f) ? '⚠' : '✓'} ${f}  →  ${domainNames}`)
   })
 
   if (domains.length > 0) {
@@ -206,10 +203,11 @@ export function formatResult(result: PickResult): string {
   }
 
   lines.push(`\n  Test plan:`)
-  lines.push(`    Smoke specs : ${smokeSpecs.length} tests`)
+  lines.push(`    Smoke : ${smokeSpecs.length} specs`)
   smokeSpecs.forEach(s => lines.push(`      · ${s}`))
-  if (eqeSpecs(e2eSpecs, strategy)) {
-    lines.push(`    E2E specs   : ${e2eSpecs.length} tests`)
+
+  if (e2eSpecs.length > 0 && strategy === 'targeted') {
+    lines.push(`    E2E   : ${e2eSpecs.length} specs`)
     e2eSpecs.forEach(s => lines.push(`      · ${s}`))
   }
 
@@ -219,8 +217,4 @@ export function formatResult(result: PickResult): string {
   lines.push(`    Saved       : ~${runtimeSaved.savedMinutes} min (${runtimeSaved.savedPercent}% faster)\n`)
 
   return lines.join('\n')
-}
-
-function eqeSpecs(e2eSpecs: string[], strategy: Strategy): boolean {
-  return e2eSpecs.length > 0 && strategy === 'targeted'
 }

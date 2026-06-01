@@ -18,10 +18,11 @@ jobs:
     name: Pick Tests
     runs-on: ubuntu-latest
     outputs:
-      smoke_specs: ${{ steps.picker.outputs.smoke_specs }}
-      e2e_domains: ${{ steps.picker.outputs.e2e_domains }}
-      strategy:    ${{ steps.picker.outputs.strategy }}
-      confidence:  ${{ steps.picker.outputs.confidence }}
+      smoke_specs:  ${{ steps.picker.outputs.smoke_specs }}
+      e2e_domains:  ${{ steps.picker.outputs.e2e_domains }}
+      strategy:     ${{ steps.picker.outputs.strategy }}
+      confidence:   ${{ steps.picker.outputs.confidence }}
+      has_domains:  ${{ steps.picker.outputs.has_domains }}
 
     steps:
       - uses: actions/checkout@v4
@@ -43,24 +44,27 @@ jobs:
           node -r ts-node/register src/cli.ts \
             --diff-base ${{ github.base_ref }} \
             --format json \
-            --output .smart-pick/plan.json
+            --output .smart-pick/plan.json || true
 
           SMOKE=$(jq -r '.smokeSpecs | join(",")' .smart-pick/plan.json)
-          DOMAINS=$(jq -r '[.domains[].id] | join(",")' .smart-pick/plan.json)
+          # Output domains as a JSON array so the matrix job can consume it with fromJSON()
+          DOMAINS_JSON=$(jq -c '[.domains[].id]' .smart-pick/plan.json)
           STRATEGY=$(jq -r '.strategy' .smart-pick/plan.json)
           CONFIDENCE=$(jq -r '.confidence' .smart-pick/plan.json)
+          HAS_DOMAINS=$(jq -r 'if .domains | length > 0 then "true" else "false" end' .smart-pick/plan.json)
 
-          echo "smoke_specs=$SMOKE"   >> $GITHUB_OUTPUT
-          echo "e2e_domains=$DOMAINS" >> $GITHUB_OUTPUT
-          echo "strategy=$STRATEGY"   >> $GITHUB_OUTPUT
-          echo "confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
+          echo "smoke_specs=$SMOKE"       >> $GITHUB_OUTPUT
+          echo "e2e_domains=$DOMAINS_JSON" >> $GITHUB_OUTPUT
+          echo "strategy=$STRATEGY"        >> $GITHUB_OUTPUT
+          echo "confidence=$CONFIDENCE"    >> $GITHUB_OUTPUT
+          echo "has_domains=$HAS_DOMAINS"  >> $GITHUB_OUTPUT
 
           echo "### Smart Test Picker" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| ----- | ----- |" >> $GITHUB_STEP_SUMMARY
           echo "| Strategy   | $STRATEGY |" >> $GITHUB_STEP_SUMMARY
-          echo "| Confidence | $(echo "$CONFIDENCE * 100" | bc)% |" >> $GITHUB_STEP_SUMMARY
-          echo "| Domains    | $DOMAINS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Confidence | $(printf '%.0f' $(echo "$CONFIDENCE * 100" | bc -l))% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Domains    | $(echo $DOMAINS_JSON | jq -r 'join(", ")') |" >> $GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v4
         with:
@@ -93,7 +97,8 @@ jobs:
             echo "No smoke specs selected — running default smoke suite"
             npx playwright test e2e/smoke/ --reporter=list
           else
-            npx playwright test $( echo $SPECS | tr ',' ' ' ) --reporter=list
+            # Convert comma-separated list to space-separated args
+            npx playwright test $(echo "$SPECS" | tr ',' ' ') --reporter=list
           fi
         env:
           BASE_URL: ${{ vars.STAGING_URL }}
@@ -106,11 +111,14 @@ jobs:
 
   # ─────────────────────────────────────────────
   # Job 3: Extended Validation — parallel matrix
+  # One runner per triggered domain, all parallel
   # ─────────────────────────────────────────────
   extended-validation:
     name: E2E [${{ matrix.domain }}]
     needs: [pick, smoke-gate]
-    if: needs.pick.outputs.strategy == 'targeted'
+    if: |
+      needs.pick.outputs.strategy == 'targeted' &&
+      needs.pick.outputs.has_domains == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true
@@ -118,7 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        domain: ${{ fromJSON(format('["{0}"]', join(fromJSON(format('[""]')), '","'))) }}
+        domain: ${{ fromJSON(needs.pick.outputs.e2e_domains) }}
 
     steps:
       - uses: actions/checkout@v4

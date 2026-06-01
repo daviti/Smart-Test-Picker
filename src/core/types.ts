@@ -43,12 +43,6 @@ export interface RuntimeEstimate {
   savedPercent: number
 }
 
-export interface PickOptions {
-  dryRun?: boolean
-  format?: 'json' | 'text'
-  aiSuggest?: boolean
-}
-
 export interface ReleaseWindow {
   startDate: Date
   endDate: Date

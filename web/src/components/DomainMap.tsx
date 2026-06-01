@@ -50,7 +50,7 @@ export function DomainMap({ result }: DomainMapProps) {
               ? 'bg-red-950 text-red-400 border border-red-800'
               : 'bg-yellow-950 text-yellow-400 border border-yellow-800'
           }`}>
-            {result.strategy.replace('-', ' ').toUpperCase()}
+            {result.strategy.replace(/-/g, ' ').toUpperCase()}
           </span>
         )}
       </div>

@@ -1,7 +1,8 @@
+import type { Scenario } from '../lib/scenarios'
 import { SCENARIOS } from '../lib/scenarios'
 
 interface ScenarioBarProps {
-  onSelect: (files: string[]) => void
+  onSelect: (scenario: Scenario) => void
   activeId: string | null
 }
 
@@ -13,7 +14,7 @@ export function ScenarioBar({ onSelect, activeId }: ScenarioBarProps) {
         {SCENARIOS.map(scenario => (
           <button
             key={scenario.id}
-            onClick={() => onSelect(scenario.files)}
+            onClick={() => onSelect(scenario)}
             className={`
               px-3 py-2 rounded-lg border text-xs transition-all
               ${activeId === scenario.id
