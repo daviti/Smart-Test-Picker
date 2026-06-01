@@ -54,7 +54,7 @@ src/billing/stripe.ts      →  Subscriptions   [critical]  →  e2e/billing/sub
 src/components/Button.tsx  →  (unmapped)      →  AI layer
 ```
 
-Domains: Auth, Subscriptions, RBAC/Teams, Viewer, Library, Explore, Navigation, Onboarding, Account Settings, Floor Plan Editor, Artifacts, Uploads/Downloads, Cross-cutting
+Domains: Auth, Subscriptions, Teams, Viewer, Library, Explore, Navigation, Onboarding, Account Settings, Uploads/Downloads, Cross-cutting
 
 ### 2. Picker Algorithm (deterministic, never flaky)
 
