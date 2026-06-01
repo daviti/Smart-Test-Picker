@@ -18,7 +18,7 @@ This project is my answer. It takes a real, painful problem — every PR trigger
 ## Live Demo
 
 ```bash
-git clone https://github.com/davidortiz/smart-test-picker
+git clone https://github.com/daviti/smart-test-picker
 cd smart-test-picker
 npm install
 npm run demo        # starts the interactive web demo at localhost:5173
