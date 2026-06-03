@@ -15,30 +15,143 @@ This project is my answer. It takes a real, painful problem — every PR trigger
 
 ---
 
-## Live Demo
+## Try It Yourself
+
+**Requirements:** Node.js 18+, npm 9+
 
 ```bash
 git clone https://github.com/daviti/smart-test-picker
 cd smart-test-picker
 npm install
-npm run demo        # starts the interactive web demo at localhost:5173
 ```
 
-Or use the CLI directly:
+No API key required — the deterministic engine runs without one. Add `ANTHROPIC_API_KEY` to also get Claude Haiku suggestions for any unmapped files.
+
+---
+
+### All Script Commands
 
 ```bash
-# Compare against main branch
-npm run smart-pick -- --diff-base main
+# ── Web demo ──────────────────────────────────────────────────────────────
+npm run demo          # build + start interactive React demo at localhost:5173
+npm run web           # start web dev server only (skip rebuild)
 
-# Dry run (print plan, don't write files)
+# ── CLI: compare against a branch ─────────────────────────────────────────
+npm run smart-pick                                  # diff vs main
+npm run smart-pick -- --diff-base develop           # diff vs develop
+npm run smart-pick -- --no-ai                       # deterministic only, no API key needed
+
+# ── CLI: pass files directly (no git needed) ──────────────────────────────
+CHANGED_FILES="src/auth/login.ts,src/billing/stripe.ts" npm run smart-pick -- --no-ai
+
+# ── CLI: dry run (print plan, write nothing) ──────────────────────────────
 npm run smart-pick:dry
 
-# Release window analysis: aggregate all changes in last 7 days
-npm run smart-pick:since -- 7d
+# ── CLI: output formats ───────────────────────────────────────────────────
+npm run smart-pick -- --format json                              # JSON to stdout
+npm run smart-pick -- --format json --output .smart-pick/plan.json  # JSON to file
 
-# JSON output for CI consumption
-npm run smart-pick -- --format json --output .smart-pick/plan.json
+# ── CLI: release intelligence ─────────────────────────────────────────────
+npm run smart-pick:since -- 7d    # aggregate last 7 days
+npm run smart-pick:since -- 2w    # aggregate last 2 weeks
+npm run smart-pick:since -- 24h   # aggregate last 24 hours
+
+# ── Build / quality ───────────────────────────────────────────────────────
+npm run build         # TypeScript compile check
 ```
+
+---
+
+### Sample Runs
+
+**Targeted run** — 2 auth files, single domain:
+
+```bash
+CHANGED_FILES="src/auth/login.ts,src/hooks/useAuth.ts" npm run smart-pick -- --no-ai
+```
+
+```
+Strategy   : TARGETED
+Confidence : 95%
+
+Changed files (2):
+  ✓ src/auth/login.ts       →  Authentication
+  ✓ src/hooks/useAuth.ts    →  Authentication
+
+Triggered domains (1):
+  🔴 Authentication [critical]
+
+Test plan:
+  Smoke : 2 specs
+    · e2e/auth/login.spec.ts
+    · e2e/auth/session.spec.ts
+  E2E   : 5 specs
+    · e2e/auth/login.spec.ts  · e2e/auth/logout.spec.ts
+    · e2e/auth/password-reset.spec.ts  · e2e/auth/sso.spec.ts
+
+Runtime savings:
+  Full suite  : ~80 min
+  This run    : ~21 min
+  Saved       : ~60 min (74% faster)
+```
+
+---
+
+**Blast-radius fallback** — 6 files across 5+ domains:
+
+```bash
+CHANGED_FILES="src/billing/stripe.ts,src/auth/session.ts,src/permissions/roles.ts,src/config/features.ts,src/upload/chunked.ts,src/explore/search.ts" npm run smart-pick -- --no-ai
+```
+
+```
+Strategy   : BLAST-RADIUS
+Confidence : 40%
+Fallback   : 5 domains touched (threshold: 5) — running full smoke suite
+
+Triggered domains (5):
+  🔴 Subscriptions & Billing [critical]
+  🔴 Authentication [critical]
+  🔴 Teams & Permissions [critical]
+  🔴 Cross-cutting [critical]
+  🟠 Uploads & Downloads [high]
+
+Runtime savings:
+  Full suite  : ~80 min
+  This run    : ~32 min  (smoke only, no E2E)
+  Saved       : ~49 min (61% faster)
+```
+
+---
+
+**No-mapping fallback** — files that match no domain rule:
+
+```bash
+CHANGED_FILES="src/styles/globals.css,src/components/Button.tsx,src/utils/formatting.ts" npm run smart-pick -- --no-ai
+```
+
+```
+Strategy   : NO-MAPPING
+Confidence : 0%
+Fallback   : No file-to-domain matches found — running full smoke suite
+
+Changed files (3):
+  ⚠ src/styles/globals.css      →  unmapped
+  ⚠ src/components/Button.tsx   →  unmapped
+  ⚠ src/utils/formatting.ts     →  unmapped
+```
+
+Add `ANTHROPIC_API_KEY=sk-...` and remove `--no-ai` to get Claude Haiku domain suggestions for these unmapped files.
+
+---
+
+### Exit Codes
+
+| Code | Meaning | When |
+|---|---|---|
+| `0` | Targeted run selected | Normal PR, high confidence |
+| `2` | Fallback triggered | Blast-radius, no-mapping, or low confidence |
+
+These wire directly into GitHub Actions — exit `2` blocks the merge until the smoke gate passes.
 
 ---
 
@@ -140,7 +253,8 @@ smart-test-picker/
 │   ├── core/
 │   │   ├── types.ts           # TypeScript interfaces
 │   │   ├── feature-mapping.ts # 13 domain definitions + file patterns
-│   │   └── picker.ts          # Selection algorithm + release analysis
+│   │   ├── picker.ts          # Selection algorithm + release analysis
+│   │   └── utils.ts           # Shared helpers (unique, etc.)
 │   ├── ai-suggest.ts          # Claude Haiku integration
 │   └── cli.ts                 # CLI entry: --diff-base, --since, --format
 ├── web/                       # Interactive React demo (Vite + Tailwind)

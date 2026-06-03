@@ -36,9 +36,9 @@ export const SCENARIOS: Scenario[] = [
       'src/feature-flags/index.ts',
       'src/auth/login.ts',
       'src/billing/stripe.ts',
-      'src/rbac/permissions.ts',
+      'src/permissions/roles.ts',
       'src/upload/chunked.ts',
-      'src/floor-plan/canvas.ts',
+      'src/editor/toolbar.ts',
     ],
   },
   {

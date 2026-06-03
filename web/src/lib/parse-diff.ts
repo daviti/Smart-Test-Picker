@@ -19,7 +19,7 @@ export function parseChangedFiles(input: string): string[] {
     !l.startsWith('+') &&
     !l.startsWith('-') &&
     !l.startsWith('\\') &&
-    l.includes('/')
+    (l.includes('/') || /\.\w+$/.test(l))
   )
 
   if (pathLines.length > 0) return pathLines

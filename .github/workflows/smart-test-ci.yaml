@@ -42,9 +42,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           node -r ts-node/register src/cli.ts \
-            --diff-base ${{ github.base_ref }} \
+            --diff-base origin/${{ github.base_ref }} \
             --format json \
-            --output .smart-pick/plan.json || true
+            --output .smart-pick/plan.json
 
           SMOKE=$(jq -r '.smokeSpecs | join(",")' .smart-pick/plan.json)
           # Output domains as a JSON array so the matrix job can consume it with fromJSON()

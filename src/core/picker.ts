@@ -7,16 +7,13 @@ import type {
   Strategy,
 } from './types'
 import { FEATURE_DOMAINS, getAllSmokeSpecs, matchDomains } from './feature-mapping'
+import { unique } from './utils'
 
 const FULL_SUITE_PARALLEL_MINUTES = 80
 const SMOKE_SPEC_MINUTES = 1.5
 const E2E_SPEC_MINUTES = 3.5
 const BLAST_RADIUS_THRESHOLD = 5
 const CONFIDENCE_THRESHOLD = 0.7
-
-function unique<T>(arr: T[]): T[] {
-  return [...new Set(arr)]
-}
 
 function calculateConfidence(
   changedFiles: string[],
@@ -177,6 +174,9 @@ export function formatResult(result: PickResult): string {
   const lines: string[] = []
   const { strategy, domains, smokeSpecs, e2eSpecs, confidence, runtimeSaved, fallbackReason } = result
   const unmappedSet = new Set(result.unmappedFiles)
+  const domainsByFile = new Map(
+    result.changedFiles.map(f => [f, matchDomains(f).map(d => d.name).join(', ') || 'unmapped'])
+  )
 
   lines.push(`\n╔══════════════════════════════════════════════════════╗`)
   lines.push(`  Smart Test Picker — ${new Date(result.timestamp).toLocaleString()}`)
@@ -190,8 +190,7 @@ export function formatResult(result: PickResult): string {
 
   lines.push(`\n  Changed files (${result.changedFiles.length}):`)
   result.changedFiles.forEach(f => {
-    const domainNames = matchDomains(f).map(d => d.name).join(', ') || 'unmapped'
-    lines.push(`    ${unmappedSet.has(f) ? '⚠' : '✓'} ${f}  →  ${domainNames}`)
+    lines.push(`    ${unmappedSet.has(f) ? '⚠' : '✓'} ${f}  →  ${domainsByFile.get(f)}`)
   })
 
   if (domains.length > 0) {

@@ -16,6 +16,9 @@ jobs:
   release-analysis:
     name: Release Intelligence Analysis
     runs-on: ubuntu-latest
+    outputs:
+      recommendation: ${{ steps.analysis.outputs.recommendation }}
+      concentration:  ${{ steps.analysis.outputs.concentration }}
 
     steps:
       - uses: actions/checkout@v4
