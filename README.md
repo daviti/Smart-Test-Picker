@@ -15,6 +15,30 @@ This project is my answer. It takes a real, painful problem — every PR trigger
 
 ---
 
+## The Problem
+
+Every team eventually hits the same wall: the test suite grows, CI slows down, and engineers start making bad tradeoffs.
+
+**Before this tool, the options were:**
+
+| Approach | What breaks |
+|---|---|
+| Run everything on every PR | 3-hour CI queues. Engineers wait, context-switch, or stop waiting and ship blind |
+| Skip CI on "small" PRs | One bad judgment call ships a regression to production |
+| Manually curate test lists | Stale within a week. Nobody maintains them. Falls apart under deadline pressure |
+| Split into unit + e2e tiers | Still runs every e2e test. Doesn't know which ones actually matter for this diff |
+
+**The root cause:** there was no connection between *what changed in the code* and *which tests cover that area*. Every PR ran the same 200+ tests regardless of whether it touched authentication, a CSS file, or a billing webhook.
+
+**What this fixes:**
+
+1. **Test selection is now tied to what changed** — not to gut feel or a static list
+2. **Risk levels drive urgency** — billing and auth changes get more tests than a button rename
+3. **Fallbacks keep it safe** — if the tool is uncertain, it runs more tests, never fewer
+4. **Release risk is measurable** — the `--since` flag tells you how much churn is accumulated before you cut a branch
+
+---
+
 ## Try It Yourself
 
 **Requirements:** Node.js 18+, npm 9+
